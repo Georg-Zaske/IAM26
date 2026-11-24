@@ -107,6 +107,11 @@ class TutorialApplication : public TVirtualMCApplication {
   void SetEventHook(std::function<void()> hook) { fEventHook = hook; }
   void ClearEventHook() { fEventHook = nullptr; }
 
+  // 0 (default): quiet; 1: print the primary particle, the time of every RunMC()
+  // and the Geant4 run/event messages
+  void SetVerbose(Int_t level);
+  Int_t GetVerbose() const { return fVerbose; }
+
   double depEinNode(const std::string& nodename) const {
     std::map<std::string, double>::const_iterator i =
         fDepEinNode.find(nodename);
@@ -138,6 +143,7 @@ class TutorialApplication : public TVirtualMCApplication {
   Bool_t fInit;                     // !
   TVirtualPad* fPad;                //!
   std::function<void()> fEventHook; //!
+  Int_t fVerbose = 0;               //!
 
   // histograms
   TH1F* hEdepLong;

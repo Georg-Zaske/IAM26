@@ -232,7 +232,7 @@ def display3d_html(pmin=0.0, width=700, height=700, view=None):
    function run(Core) {{
       Core.settings.HandleKeys = false;
       Promise.all([{_zip(jgeo)}, {_zip(jtrk)}])
-         .then(([jg, jt]) => Core.draw('{div}', Core.parse(jg), 'transp80')
+         .then(([jg, jt]) => Core.draw('{div}', Core.parse(jg), 'transp80;axis')
                                  .then(p => p.drawExtras(tracks(JSON.parse(jt))).then(() => {{ restore(p); sharpen(p); save(p); }})))
          .catch(fail);
    }}
@@ -293,10 +293,13 @@ def event_gui(app, pdg=-13, momentum=1.0):
     button = widgets.Button(description='Next event', button_style='primary')
     view3d = widgets.Checkbox(value=True, description='3D view', indent=False)
 
-    display(widgets.HBox([ptype, pvalue, button, view3d]))
+    status = widgets.HTML('Choose the particle and the momentum and press <i>Next event</i>.')
+    display(widgets.VBox([widgets.HBox([ptype, pvalue, button, view3d]), status]))
     # one display, replaced for every event (no piling up of views)
     event_display = display(HTML(''), display_id=True)
     view = 'gui_' + uuid.uuid4().hex   # camera kept from event to event
+    log = 'event.log'                  # Geant4 output of the last event
+    state = {'events': 0}
 
     def show_event(_=None):
         if view3d.value:
@@ -305,11 +308,42 @@ def event_gui(app, pdg=-13, momentum=1.0):
             event_display.update(Image(data=side_view_png(app), format='png', width=700))
 
     def next_event(_=None):
-        app.SetPrimaryPDG(ptype.value)
-        app.SetPrimaryMomentum(pvalue.value)
-        app.RunMC(1, True)
-        color_tracks()
-        show_event()
+        import time
+        state['events'] += 1
+        name = ptype.label
+        what = f'event {state["events"]}: {name}, p = {pvalue.value:g} GeV'
+        first = (' (the first event takes longer: Geant4 builds its physics tables)'
+                 if state['events'] == 1 else '')
+        button.disabled = True
+        status.value = f'<b>Generating {what}</b> ...{first}'
+        start = time.time()
+        try:
+            app.SetPrimaryPDG(ptype.value)
+            app.SetPrimaryMomentum(pvalue.value)
+            # Geant4 output to a file: ROOT's notebook capture would only show it
+            # after the callback, and a long output could block the kernel.
+            # Empty the file and append: with 'w' the reused output stream keeps
+            # its old position and the new text lands behind a gap
+            open(log, 'w').close()
+            ROOT.gSystem.RedirectOutput(log, 'a')
+            try:
+                app.RunMC(1, True)
+            finally:
+                ROOT.gROOT.ProcessLine(_FLUSH + 'gSystem->RedirectOutput(nullptr);')
+            generated = time.time() - start
+            status.value = f'<b>Drawing {what}</b> ...'
+            color_tracks()
+            show_event()
+            ntracks = ROOT.gGeoManager.GetNtracks() if ROOT.gGeoManager else 0
+            status.value = (f'<b>Done: {what}</b>, {ntracks} tracks, generated in '
+                            f'{generated:.1f} s, output in <code>{log}</code>'
+                            f'<pre style="font-size:smaller; margin:4px 0">{_tail(log, 5)}</pre>')
+        except Exception as e:
+            status.value = (f'<b style="color:red">Failed: {what}</b>: '
+                            f'{type(e).__name__}: {e}')
+            raise
+        finally:
+            button.disabled = False
 
     button.on_click(next_event)
     view3d.observe(show_event, names='value')
@@ -349,9 +383,17 @@ def _histograms_png(hists, canvas):
             saved.cd()
 
 
-def _tail(path, lines=8):
-    """last lines of a text file (HTML-escaped)"""
+# std::cout and printf are buffered: flush them, or the last lines written by a
+# macro are missing from the log file until much later
+_FLUSH = 'std::cout << std::flush; std::cerr << std::flush; fflush(stdout); '
+
+
+def _tail(path, lines=8, flush=False):
+    """last lines of a text file (HTML-escaped); flush=True writes pending
+    C++/C output to the file first"""
     import html
+    if flush:
+        ROOT.gROOT.ProcessLine(_FLUSH)
     try:
         with open(path, errors='replace') as f:
             return html.escape(''.join(f.readlines()[-lines:]))
@@ -392,7 +434,7 @@ def run_macro(macro, interval=2.0, pmin=0.0):
                            f'{now - start:.0f} s, output in <code>{log}</code>'
                            + (f' <span style="color:red">(display error: {state["error"]})</span>'
                               if state['error'] else '')
-                           + f'<pre style="font-size:smaller; margin:4px 0">{_tail(log)}</pre>'))
+                           + f'<pre style="font-size:smaller; margin:4px 0">{_tail(log, flush=True)}</pre>'))
         if state['events'] and ROOT.gGeoManager and ROOT.gGeoManager.GetNtracks():
             event_view.update(HTML(display3d_html(pmin, view=view)))
         hists = _histograms(skip)
@@ -419,7 +461,7 @@ def run_macro(macro, interval=2.0, pmin=0.0):
     try:
         ROOT.gROOT.ProcessLine(f'.x {macro}')
     finally:
-        ROOT.gROOT.ProcessLine('gSystem->RedirectOutput(nullptr);')   # back to the notebook
+        ROOT.gROOT.ProcessLine(_FLUSH + 'gSystem->RedirectOutput(nullptr);')   # back to the notebook
         app.ClearEventHook()
         _hook = None
         try:

@@ -102,6 +102,11 @@ void TutorialApplication::InitMC(const char* setup) {
   gMC->Init();
   gMC->BuildPhysics();
 
+  // no messages for every run/event ("### Run 0 start.", ">>> Event 0",
+  // "Time of this run", ...) unless verbose, so the output of the analysis
+  // macros stays readable; these commands exist only after Init()
+  SetVerbose(fVerbose);
+
   //((TGeant4*)gMC)->ProcessGeantCommand("/material/nist/listMaterials all");
 
   // Should this really be part of InitMC() ?
@@ -151,6 +156,17 @@ void TutorialApplication::InitMC(const char* setup) {
 }
 
 //______________________________________________________________________________
+void TutorialApplication::SetVerbose(Int_t level) {
+  fVerbose = level;
+  // geant4_vmc run/event actions (available after InitMC())
+  if (auto g4 = dynamic_cast<TGeant4*>(gMC)) {
+    TString lvl = TString::Format(" %d", level > 0 ? 1 : 0);
+    g4->ProcessGeantCommand("/mcVerbose/runAction" + lvl);
+    g4->ProcessGeantCommand("/mcVerbose/eventAction" + lvl);
+  }
+}
+
+//______________________________________________________________________________
 void TutorialApplication::RunMC(Int_t nofEvents, bool draw) {
   if (!fInit) {
     cout << "ERROR! Call InitMC() first!" << endl;
@@ -162,8 +178,9 @@ void TutorialApplication::RunMC(Int_t nofEvents, bool draw) {
   timer.Start();
   gMC->ProcessRun(nofEvents);
   timer.Stop();
-  cout << "RunMC timing: real time:" << timer.RealTime()
-       << "s  CPU time:" << timer.CpuTime() << "s" << endl;
+  if (fVerbose > 0)
+    cout << "RunMC timing: real time:" << timer.RealTime()
+         << "s  CPU time:" << timer.CpuTime() << "s" << endl;
   if (draw) DrawEvent();
   if (fEventHook) fEventHook();
 }
@@ -353,10 +370,12 @@ void TutorialApplication::GeneratePrimaries() {
   //          Double_t tof, Double_t polx,
   //          Double_t poly, Double_t polz, TMCProcess mech,
   //          Int_t& ntr, Double_t weight, Int_t is)
-  std::cout << fPrimaryMomentum.Px() << ",  " << fPrimaryMomentum.Py() << ", "
-            << fPrimaryMomentum.Pz() << ", " << fPrimaryMomentum.E() << ", "
-            << fPrimaryVertex.X() << ", " << fPrimaryVertex.Y() << ", "
-            << fPrimaryVertex.Z() << '\n';
+  if (fVerbose > 0)
+    std::cout << "primary: p = (" << fPrimaryMomentum.Px() << ", "
+              << fPrimaryMomentum.Py() << ", " << fPrimaryMomentum.Pz()
+              << ") GeV, E = " << fPrimaryMomentum.E() << " GeV, vertex = ("
+              << fPrimaryVertex.X() << ", " << fPrimaryVertex.Y() << ", "
+              << fPrimaryVertex.Z() << ") cm\n";
   fStack->PushTrack(toBeDone, -1, fPrimaryPDG, fPrimaryMomentum.Px(),
                     fPrimaryMomentum.Py(), fPrimaryMomentum.Pz(),
                     fPrimaryMomentum.E(), fPrimaryVertex.X(),
